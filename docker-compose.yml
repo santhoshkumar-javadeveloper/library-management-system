@@ -1,0 +1,114 @@
+services:
+  database:
+    image: mongo:6
+    volumes:
+      - mongodata:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      # Use 27018 on host so Compass can connect without conflicting with local MongoDB on 27017
+      - "27018:27017"
+
+  backend:
+    build: ./apps/api
+    environment:
+      PORT: 3000
+      MONGODB_URI: mongodb://database:27017/library
+      JWT_SECRET: library-hackathon-secret
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4318
+      INJECT_ANOMALIES: "false"
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+  frontend:
+    build:
+      context: ./apps/web
+      args:
+        VITE_API_URL: http://127.0.0.1:3000
+    ports:
+      - "5174:80"
+    depends_on:
+      - backend
+
+  admin:
+    build:
+      context: ./apps/admin
+      args:
+        VITE_API_URL: http://127.0.0.1:3000
+        VITE_APP_URL: http://127.0.0.1:5174
+    ports:
+      - "5175:80"
+    depends_on:
+      - backend
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+
+  loki:
+    image: grafana/loki:latest
+    volumes:
+      - ./infra/loki/config.yml:/etc/loki/config.yml
+      - lokidata:/loki
+    command: -config.file=/etc/loki/config.yml
+    ports:
+      - "3100:3100"
+
+  promtail:
+    image: grafana/promtail:latest
+    volumes:
+      - ./infra/promtail/config.yml:/etc/promtail/config.yml
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+
+  tempo:
+    image: grafana/tempo:2.3.0
+    volumes:
+      - ./infra/tempo/config.yml:/etc/tempo/config.yml
+      - tempodata:/var/tempo
+    command: -config.file=/etc/tempo/config.yml
+    ports:
+      - "3200:3200"
+      - "4318:4318"
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "false"
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning
+      - ./infra/dashboards:/etc/grafana/provisioning/dashboards/json
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+
+volumes:
+  mongodata:
+  lokidata:
+  tempodata:
+  grafanadata:

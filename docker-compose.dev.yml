@@ -1,0 +1,15 @@
+# Development override: mount source so code changes apply without rebuilding images.
+# Run: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# Backend: change files in apps/api/src → container restarts automatically (node --watch).
+# Frontend: run locally with npm run dev, or rebuild once when apps/web changes.
+
+services:
+  backend:
+    volumes:
+      - ./apps/api/src:/app/src
+    command: node --watch src/server.js
+    # Code changes in ./backend/src are picked up; container restarts. No image rebuild.
+
+  # Frontend stays built from image. For frontend-only changes without full rebuild,
+  # run in host: cd apps/web && npm run dev (use port 5173 and set VITE_API_URL to http://127.0.0.1:3000)
+  # Or rebuild only frontend when needed: docker-compose up -d --build frontend (reuses backend/db cache)
